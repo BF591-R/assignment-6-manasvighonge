@@ -14,6 +14,8 @@ for (package in libs) {
                                          character.only = T))
   require(package, character.only = T)
 }
+select <- dplyr::select
+filter <- dplyr::filter
 
 #### load and filter ####
 #' Load n' trim
@@ -33,8 +35,14 @@ for (package in libs) {
 #'
 #' @examples counts_df <- load_n_trim("/path/to/counts/verse_counts.tsv")
 load_n_trim <- function(filename) {
-    return(NULL)
+    counts <- read_tsv(filename, show_col_types = FALSE)
+    colnames(counts)[1] <- "gene"
+    counts %>%
+        dplyr::select(gene, vP0_1, vP0_2, vAd_1, vAd_2) %>%
+        column_to_rownames("gene") %>%
+        as.data.frame()
 }
+
 
 #' Perform a DESeq2 analysis of rna seq data
 #'
@@ -57,7 +65,14 @@ load_n_trim <- function(filename) {
 #'
 #' @examples run_deseq(counts_df, coldata, 10, "condition_day4_vs_day7")
 run_deseq <- function(count_dataframe, coldata, count_filter, condition_name) {
-    return(NULL)
+    dds <- DESeqDataSetFromMatrix(
+        countData = count_dataframe,
+        colData   = coldata,
+        design    = ~ condition
+    )
+    dds <- dds[rowSums(counts(dds)) >= count_filter, ]
+    dds <- DESeq(dds)
+    results(dds, name = condition_name)
 }
 
 #### edgeR ####
@@ -77,7 +92,12 @@ run_deseq <- function(count_dataframe, coldata, count_filter, condition_name) {
 #'
 #' @examples run_edger(counts_df, group)
 run_edger <- function(count_dataframe, group) {
-    return(NULL)
+    dge <- DGEList(counts = count_dataframe, group = group)
+    dge <- dge[filterByExpr(dge), , keep.lib.sizes = FALSE]
+    dge <- calcNormFactors(dge)
+    dge <- estimateDisp(dge)
+    et  <- exactTest(dge)
+    as.data.frame(topTags(et, n = nrow(et$table), sort.by = "none"))
 }
 
  #### limma ####
@@ -101,7 +121,14 @@ run_edger <- function(count_dataframe, group) {
 #' 
 #' @examples run_limma(counts_df, design, voom=TRUE)
 run_limma <- function(counts_dataframe, design, group) {
-    return(NULL)
+    dge <- DGEList(counts = counts_dataframe, group = group)
+    dge <- dge[filterByExpr(dge, design), , keep.lib.sizes = FALSE]
+    dge <- calcNormFactors(dge)
+    v   <- voom(dge, design)
+    fit <- lmFit(v, design)
+    fit <- eBayes(fit)
+    topTable(fit, number = nrow(fit$coefficients), resort.by = "p") %>%
+        dplyr::select(logFC, AveExpr, t, P.Value, adj.P.Val, B)
 }
 
 #### ggplot ####
@@ -133,7 +160,11 @@ run_limma <- function(counts_dataframe, design, group) {
 #' 2 deseq   9.97e-261
 #' 3 deseq   1.16e-206
 combine_pval <- function(deseq, edger, limma) {
-    return(NULL)
+    bind_rows(
+        tibble(package = "deseq",  pval = deseq$pvalue),
+        tibble(package = "edgeR",  pval = edger$PValue),
+        tibble(package = "limma",  pval = limma$P.Value)
+    )
 }
 
 #' Create three separate facets for each of the diff. exp. pacakges.
@@ -157,7 +188,11 @@ combine_pval <- function(deseq, edger, limma) {
 #' 1  -9.84 2.23e-180 edgeR  
 #' 2   6.18 5.87e-179 edgeR  
 create_facets <- function(deseq, edger, limma) {
-    return(NULL)
+    bind_rows(
+        tibble(logFC = deseq$log2FoldChange, padj = deseq$padj,      package = "DESeq2"),
+        tibble(logFC = edger$logFC,          padj = edger$padj,       package = "edgeR"),
+        tibble(logFC = limma$logFC,          padj = limma$adj.P.Val,  package = "Limma")
+    )
 }
 
 #' Create an attractive volcano plot of three diff. exp. packages' data.
@@ -187,6 +222,17 @@ create_facets <- function(deseq, edger, limma) {
 #'
 #' @examples p <- theme_plot(volcano)
 theme_plot <- function(volcano_data) {
-    return(NULL)
+    volcano_data %>%
+        mutate(highlight = padj < 1e-100) %>%
+        ggplot(aes(x = logFC, y = -log10(padj), color = highlight)) +
+        geom_point(alpha = 0.6, size = 1) +
+        scale_color_manual(values = c("FALSE" = "steelblue", "TRUE" = "firebrick"),
+                           labels = c("FALSE" = "padj >= 1e-100", "TRUE" = "padj < 1e-100")) +
+        facet_wrap(~ package) +
+        labs(title = "Volcano plots: day0 vs adult",
+             x = "log2 Fold Change",
+             y = "-log10(adjusted p-value)",
+             color = "Significance") +
+        theme_bw()
 }
 
