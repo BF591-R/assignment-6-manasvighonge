@@ -127,7 +127,7 @@ run_limma <- function(counts_dataframe, design, group) {
     v   <- voom(dge, design)
     fit <- lmFit(v, design)
     fit <- eBayes(fit)
-    topTable(fit, number = nrow(fit$coefficients), resort.by = "p") %>%
+    topTable(fit, number = Inf, sort.by = "p") %>%   # ← sort.by not resort.by
         dplyr::select(logFC, AveExpr, t, P.Value, adj.P.Val, B)
 }
 
@@ -190,7 +190,7 @@ combine_pval <- function(deseq, edger, limma) {
 create_facets <- function(deseq, edger, limma) {
     bind_rows(
         tibble(logFC = deseq$log2FoldChange, padj = deseq$padj,      package = "DESeq2"),
-        tibble(logFC = edger$logFC,          padj = edger$padj,       package = "edgeR"),
+        tibble(logFC = edger$logFC,          padj = edger$FDR,       package = "edgeR"),
         tibble(logFC = limma$logFC,          padj = limma$adj.P.Val,  package = "Limma")
     )
 }
