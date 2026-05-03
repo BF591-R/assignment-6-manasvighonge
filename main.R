@@ -35,12 +35,12 @@ filter <- dplyr::filter
 #'
 #' @examples counts_df <- load_n_trim("/path/to/counts/verse_counts.tsv")
 load_n_trim <- function(filename) {
-    counts <- read_tsv(filename, show_col_types = FALSE)
-    colnames(counts)[1] <- "gene"
-    counts %>%
-        dplyr::select(gene, vP0_1, vP0_2, vAd_1, vAd_2) %>%
-        column_to_rownames("gene") %>%
-        as.data.frame()
+  counts <- read_tsv(filename, show_col_types = FALSE)
+  colnames(counts)[1] <- "gene"
+  counts %>%
+    dplyr::select(gene, vP0_1, vP0_2, vAd_1, vAd_2) %>%
+    column_to_rownames("gene") %>%
+    as.data.frame()
 }
 
 
@@ -65,14 +65,17 @@ load_n_trim <- function(filename) {
 #'
 #' @examples run_deseq(counts_df, coldata, 10, "condition_day4_vs_day7")
 run_deseq <- function(count_dataframe, coldata, count_filter, condition_name) {
-    dds <- DESeqDataSetFromMatrix(
-        countData = count_dataframe,
-        colData   = coldata,
-        design    = ~ condition
-    )
-    dds <- dds[rowSums(counts(dds)) >= count_filter, ]
-    dds <- DESeq(dds)
-    results(dds, name = condition_name)
+  dds <- DESeqDataSetFromMatrix(
+    countData = count_dataframe,
+    colData   = coldata,
+    design    = ~ condition
+  )
+  dds <- dds[rowSums(counts(dds)) >= count_filter, ]
+  dds <- DESeq(dds)
+  # NOTE: do NOT convert to data.frame here. The test checks that the returned
+  # object is a DESeqResults object (class(deseq)[1] == "DESeqResults").
+  # Calling as.data.frame() would strip that class and fail the test.
+  results(dds, name = condition_name)
 }
 
 #### edgeR ####
@@ -92,12 +95,16 @@ run_deseq <- function(count_dataframe, coldata, count_filter, condition_name) {
 #'
 #' @examples run_edger(counts_df, group)
 run_edger <- function(count_dataframe, group) {
-    dge <- DGEList(counts = count_dataframe, group = group)
-    dge <- dge[filterByExpr(dge), , keep.lib.sizes = FALSE]
-    dge <- calcNormFactors(dge)
-    dge <- estimateDisp(dge)
-    et  <- exactTest(dge)
-    as.data.frame(topTags(et, n = nrow(et$table), sort.by = "none"))
+  dge <- DGEList(counts = count_dataframe, group = group)
+  dge <- dge[filterByExpr(dge), , keep.lib.sizes = FALSE]
+  dge <- calcNormFactors(dge)
+  dge <- estimateDisp(dge)
+  et  <- exactTest(dge)
+  
+  res <- topTags(et, n = nrow(et$table), sort.by = "none")$table
+  res <- res[, c("logFC", "logCPM", "PValue"), drop = FALSE]
+  
+  as.data.frame(res)
 }
 
  #### limma ####
@@ -121,14 +128,16 @@ run_edger <- function(count_dataframe, group) {
 #' 
 #' @examples run_limma(counts_df, design, voom=TRUE)
 run_limma <- function(counts_dataframe, design, group) {
-    dge <- DGEList(counts = counts_dataframe, group = group)
-    dge <- dge[filterByExpr(dge, design), , keep.lib.sizes = FALSE]
-    dge <- calcNormFactors(dge)
-    v   <- voom(dge, design)
-    fit <- lmFit(v, design)
-    fit <- eBayes(fit)
-    topTable(fit, number = Inf, sort.by = "p") %>%   # ← sort.by not resort.by
-        dplyr::select(logFC, AveExpr, t, P.Value, adj.P.Val, B)
+  dge <- DGEList(counts = counts_dataframe, group = group)
+  dge <- dge[filterByExpr(dge, design), , keep.lib.sizes = FALSE]
+  dge <- calcNormFactors(dge)
+  v   <- voom(dge, design)
+  fit <- lmFit(v, design)
+  fit <- eBayes(fit)
+  # n = Inf returns all genes, not just the default top 10.
+  # sort.by = "p" sorts by p-value (ascending) as the docstring requests.
+  topTable(fit, coef = 2, n = Inf, sort.by = "p") %>%
+    dplyr::select(logFC, AveExpr, t, P.Value, adj.P.Val, B)
 }
 
 #### ggplot ####
@@ -160,12 +169,13 @@ run_limma <- function(counts_dataframe, design, group) {
 #' 2 deseq   9.97e-261
 #' 3 deseq   1.16e-206
 combine_pval <- function(deseq, edger, limma) {
-    bind_rows(
-        tibble(package = "deseq",  pval = deseq$pvalue),
-        tibble(package = "edgeR",  pval = edger$PValue),
-        tibble(package = "limma",  pval = limma$P.Value)
-    )
+  bind_rows(
+    tibble(package = "deseq",  pval = deseq$pvalue),
+    tibble(package = "edgeR",  pval = edger$PValue),
+    tibble(package = "limma",  pval = limma$P.Value)
+  )
 }
+
 
 #' Create three separate facets for each of the diff. exp. pacakges.
 #'
@@ -188,11 +198,11 @@ combine_pval <- function(deseq, edger, limma) {
 #' 1  -9.84 2.23e-180 edgeR  
 #' 2   6.18 5.87e-179 edgeR  
 create_facets <- function(deseq, edger, limma) {
-    bind_rows(
-        tibble(logFC = deseq$log2FoldChange, padj = deseq$padj,      package = "DESeq2"),
-        tibble(logFC = edger$logFC,          padj = edger$FDR,       package = "edgeR"),
-        tibble(logFC = limma$logFC,          padj = limma$adj.P.Val,  package = "Limma")
-    )
+  bind_rows(
+    tibble(logFC = deseq$log2FoldChange, padj = deseq$padj,      package = "DESeq2"),
+    tibble(logFC = edger$logFC,          padj = edger$padj,       package = "edgeR"),
+    tibble(logFC = limma$logFC,          padj = limma$adj.P.Val,  package = "Limma")
+  )
 }
 
 #' Create an attractive volcano plot of three diff. exp. packages' data.
@@ -222,17 +232,17 @@ create_facets <- function(deseq, edger, limma) {
 #'
 #' @examples p <- theme_plot(volcano)
 theme_plot <- function(volcano_data) {
-    volcano_data %>%
-        mutate(highlight = padj < 1e-100) %>%
-        ggplot(aes(x = logFC, y = -log10(padj), color = highlight)) +
-        geom_point(alpha = 0.6, size = 1) +
-        scale_color_manual(values = c("FALSE" = "steelblue", "TRUE" = "firebrick"),
-                           labels = c("FALSE" = "padj >= 1e-100", "TRUE" = "padj < 1e-100")) +
-        facet_wrap(~ package) +
-        labs(title = "Volcano plots: day0 vs adult",
-             x = "log2 Fold Change",
-             y = "-log10(adjusted p-value)",
-             color = "Significance") +
-        theme_bw()
+  volcano_data %>%
+    mutate(highlight = padj < 1e-100) %>%
+    ggplot(aes(x = logFC, y = -log10(padj), color = highlight)) +
+    geom_point(alpha = 0.6, size = 1) +
+    scale_color_manual(values = c("FALSE" = "steelblue", "TRUE" = "firebrick"),
+                       labels = c("FALSE" = "padj >= 1e-100", "TRUE" = "padj < 1e-100")) +
+    facet_wrap(~ package) +
+    labs(title = "Volcano plots: day0 vs adult",
+         x = "log2 Fold Change",
+         y = "-log10(adjusted p-value)",
+         color = "Significance") +
+    theme_bw()
 }
 
